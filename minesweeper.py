@@ -1,5 +1,8 @@
 import random
 import itertools
+import os
+import time
+ 
 
 class Minesweeper:
 	def __init__(self,w,h,m):
@@ -132,17 +135,33 @@ class Minesweeper:
 					print("MINA!")
 					return
 				else:
-					self.uncovered.add(coor)
+					if coor not in self.numbers:
+						prev=set()
+						q={coor}
+						while prev!=q:
+							prev=q.copy()
+							for sq in prev:
+								q|={n for n in self.effective_neighbors(sq[0],sq[1]) if n not in self.numbers}
+						for sq in q.copy():
+							q|=self.effective_neighbors(sq[0],sq[1])
+						self.uncovered|=q
+					else:
+						self.uncovered.add(coor)
 			elif move.split(" ")[0]=="M":
-				if (len(self.probed)<self.m):
+				if (self.m>0):
 					self.probed.add(coor)
+					self.m-=1
 			elif move.split(" ")[0]=="UM":
 				if coor in self.probed:
 					self.probed.remove(coor)
+					self.m+=1
 			else:
 				print("Error interpretando texto ingresado, intenta de nuevo")
 		self.show_progress()
 		print("Felicidades! Has ganado!")
+
+	def uncovered_squares(self):
+		return {(i,j) for i in range(self.w) for j in range(self.h) if (i,j) not in self.probed and (i,j) not in self.uncovered}
 
 	# def clauses(self):
 	# 	s=[]
@@ -174,17 +193,17 @@ class Minesweeper:
 			#s=[{"M"+str(coor[0])+","+str(coor[1]) for coor in c} for c in l]
 			#s_=[{"~M"+str(coor[0])+","+str(coor[1]) for coor in c} for c in l]
 			s|={frozenset(["M"+str(coor[0])+","+str(coor[1]) for coor in c]) for c in l}
-			s|={frozenset(["~M"+str(coor[0])+","+str(coor[1]) for coor in c]) for c in l}
+			s|={frozenset(["~M"+str(coor[0])+","+str(coor[1]) for coor in c]) for c in u}
 		return s
 
 	def mine_clauses(self):
 		m=len(self.mines)-len(self.probed)
-		N={(i,j) for i in range(self.w) for j in range(self.h) if (i,j) not in self.probed and (i,j) not in self.uncovered}
+		N=self.uncovered_squares()
 
 		l=list(map(set,itertools.combinations(N,len(N)-m+1)))
 		u=list(map(set,itertools.combinations(N,m+1)))
 		s={frozenset(["M"+str(coor[0])+","+str(coor[1]) for coor in c]) for c in l}
-		s_={frozenset(["~M"+str(coor[0])+","+str(coor[1]) for coor in c]) for c in l}
+		s_={frozenset(["~M"+str(coor[0])+","+str(coor[1]) for coor in c]) for c in u}
 		return s|s_
 
 	def clauses(self):
@@ -193,6 +212,27 @@ class Minesweeper:
 			s|=self.square_clauses(u[0],u[1])
 		s|=self.mine_clauses()
 		return s
+
+	def suggest_next_move(self):
+		cnf=self.clauses()
+		unit_clauses=[list(c) for c in cnf if len(c)==1]
+		if unit_clauses:
+			for c in unit_clauses:
+				if c[0][0]=='~':
+					print("Explore",c[0][2:])
+				else:
+					print("Mark",c[0][1:],"as mine")
+		else:
+			flag=False
+			for coor in self.uncovered_squares():
+				if is_unsat(cnf|{frozenset(["M"+str(coor[0])+","+str(coor[1])])},'minesweeper.cnf','minesweeper_out.cnf'):
+					print("Explore",",".join(map(str,coor)))
+					return
+				elif is_unsat(cnf|{frozenset(["~M"+str(coor[0])+","+str(coor[1])])},'minesweeper.cnf','minesweeper_out.cnf'):
+					print("Mark",",".join(map(str,coor)),"as mine")
+					return
+			print("Explore random covered square")
+
 
 
 def clauses_to_cnf(s):
@@ -215,8 +255,20 @@ def clauses_to_cnf(s):
 		cnf+="c {} -> {}\n".format(k,d[k])
 	return cnf
 
-
-
+def is_unsat(s,filename,outputname):
+	with open(filename,"w") as f:
+		print(len(s))
+		for c in s:
+			print(" or ".join(c))
+		content=clauses_to_cnf(s)
+		f.write(content)
+		f.close()
+		os.system('minisat {} {}'.format(filename,outputname))
+		time.sleep(1)
+		with open(outputname,"r") as out:
+			if out.read().split('\n')[0] == 'UNSAT':
+				return True
+	return False
 
 
 
